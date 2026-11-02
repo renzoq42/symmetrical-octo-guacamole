@@ -1,234 +1,287 @@
 -- dan_ffa_cheat.lua
--- Requires Rayfield UI (https://sirius.menu/rayfield)
--- Loadstring environment: Roblox Executor
+-- UI: Linoria v2.0
+-- Logic: Aimbot, Silent Aim, Triggerbot
 
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/addons/SaveManager.lua"))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 
-local CheatSettings = {
+local Settings = {
     AimEnabled = false,
-    SilentEnabled = false,
-    TriggerbotEnabled = false,
-    AimMode = "Mouse", -- Mouse, Camera
+    AimMode = "Mouse",
     TargetPart = "Head",
     AirTargetPart = "Head",
-    Sensitivity = 0.5,
+    Sensitivity = 1,
     Smoothing = 0.2,
     Prediction = 0.1,
     StickyTarget = false,
-    DisableOnKill = false
+    DisableOnKill = false,
+    SilentEnabled = false,
+    TriggerbotEnabled = false,
+    TriggerbotDelay = 0.05,
+    VisualsEnabled = false
 }
 
--- Core Logic
+local CurrentTarget = nil
+local LockedTarget = nil
+
+-- Core Functions
+
+local function getCharacter(player)
+    if player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+        return player.Character
+    end
+    return nil
+end
+
+local function isValidTarget(player)
+    if player == LocalPlayer then return false end
+    if player.Team == LocalPlayer.Team then return false end
+    local char = getCharacter(player)
+    if not char then return false end
+    return true
+end
 
 local function getTarget()
     local closest = nil
     local shortestDist = math.huge
     local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+
+    if Settings.StickyTarget and LockedTarget then
+        if isValidTarget(LockedTarget) then
+            return LockedTarget
+        else
+            LockedTarget = nil
+        end
+    end
     
     for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Team ~= LocalPlayer.Team then
+        if isValidTarget(player) then
             local char = player.Character
-            if char then
-                local partName = char.Humanoid and char.Humanoid.FloorMaterial == Enum.Material.Air and CheatSettings.AirTargetPart or CheatSettings.TargetPart
-                local targetPart = char:FindFirstChild(partName)
-                if targetPart then
-                    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-                    if onScreen then
-                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                        if dist < shortestDist then
-                            shortestDist = dist
-                            closest = {part = targetPart, pos = screenPos, char = char}
-                        end
+            local hum = char:FindFirstChild("Humanoid")
+            local partName = Settings.TargetPart
+            
+            if hum and hum.FloorMaterial == Enum.Material.Air then
+                partName = Settings.AirTargetPart
+            end
+            
+            local targetPart = char:FindFirstChild(partName)
+            if targetPart then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                if onScreen and screenPos.Z > 0 then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closest = {
+                            player = player,
+                            part = targetPart,
+                            screenPos = Vector2.new(screenPos.X, screenPos.Y),
+                            char = char,
+                            hum = hum
+                        }
                     end
                 end
             end
         end
     end
+    
+    if Settings.StickyTarget and closest then
+        LockedTarget = closest.player
+    end
+    
     return closest
 end
 
-local function prediction(targetPart, velocity)
-    if not targetPart or not velocity then return targetPart.Position end
-    return targetPart.Position + (velocity * CheatSettings.Prediction)
+local function getPredictedPosition(targetPart)
+    if not targetPart then return Vector3.zero end
+    local velocity = targetPart.AssemblyLinearVelocity or Vector3.zero
+    return targetPart.Position + (velocity * Settings.Prediction)
 end
 
--- Aimbot (Mouse/Camera)
+-- Aimbot Loop
 RunService.RenderStepped:Connect(function()
-    if not CheatSettings.AimEnabled then return end
-    if not game:GetService("UserInputService"):IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then return end
+    if not Settings.AimEnabled then return end
+    if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then return end
     
     local target = getTarget()
-    if target then
-        local aimPos = prediction(target.part, target.part.Velocity)
-        
-        if CheatSettings.AimMode == "Mouse" then
-            local screenPos = Camera:WorldToViewportPoint(aimPos)
+    if not target then return end
+    
+    local aimPos = getPredictedPosition(target.part)
+    
+    if Settings.AimMode == "Mouse" then
+        local screenPos = Camera:WorldToViewportPoint(aimPos)
+        if screenPos.Z > 0 then
             local deltaX = screenPos.X - Mouse.X
             local deltaY = screenPos.Y - Mouse.Y
+            local smoothFactor = 1 - Settings.Smoothing
             
-            -- Apply smoothing and sensitivity
-            local smoothFactor = 1 - CheatSettings.Smoothing
-            mousemoverel(deltaX * smoothFactor * CheatSettings.Sensitivity, deltaY * smoothFactor * CheatSettings.Sensitivity)
-            
-        elseif CheatSettings.AimMode == "Camera" then
-            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), CheatSettings.Smoothing)
+            mousemoverel(deltaX * smoothFactor * Settings.Sensitivity, deltaY * smoothFactor * Settings.Sensitivity)
         end
+    elseif Settings.AimMode == "Camera" then
+        Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, aimPos), Settings.Smoothing)
     end
 end)
 
--- Silent Aim (Namecall Hook)
+-- Silent Aim (Namecall)
 local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     
-    if CheatSettings.SilentEnabled and method == "FireServer" and self.Name == "Fire" or self.Name == "GunClient" then -- Adjust for Dan FFA remote
+    if Settings.SilentEnabled and method == "FireServer" then
         local args = {...}
         local target = getTarget()
+        
         if target then
-            -- Overwrite hit part argument (Depends on remote structure)
-            -- Typically args[1] is hit part, args[2] is position
-            if type(args[1]) == "Instance" then
-                args[1] = target.part
-            elseif type(args[1]) == "Vector3" then
-                args[1] = prediction(target.part, target.part.Velocity)
+            -- Generic remote hook. Adjust based on Dan FFA's remote names.
+            -- Common Dan FFA combat remote: "Fire" or "WeaponFire"
+            if self.Name == "Fire" or self.Name == "WeaponFire" or self.Name == "GunClient" then
+                for i, v in pairs(args) do
+                    if typeof(v) == "Instance" and v:IsA("BasePart") then
+                        args[i] = target.part
+                        break
+                    elseif typeof(v) == "Vector3" then
+                        args[i] = target.part.Position
+                        break
+                    end
+                end
+                return oldNamecall(self, unpack(args))
             end
-            return oldNamecall(self, unpack(args))
         end
     end
     return oldNamecall(self, ...)
 end)
 
 -- Triggerbot
+local lastTrigger = 0
 RunService.Heartbeat:Connect(function()
-    if not CheatSettings.TriggerbotEnabled then return end
+    if not Settings.TriggerbotEnabled then return end
+    if tick() - lastTrigger < Settings.TriggerbotDelay then return end
+    
     local target = getTarget()
-    if target then
-        local screenPos = Camera:WorldToViewportPoint(target.part.Position)
-        if screenPos.Z > 0 then
-            local mousePos = Vector2.new(Mouse.X, Mouse.Y)
-            local targetPos = Vector2.new(screenPos.X, screenPos.Y)
-            if (mousePos - targetPos).Magnitude < 15 then
-                -- Simulate click
-                mouse1click()
-            end
+    if not target then return end
+    
+    local screenPos = Camera:WorldToViewportPoint(target.part.Position)
+    if screenPos.Z > 0 then
+        local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+        local targetPos = Vector2.new(screenPos.X, screenPos.Y)
+        
+        if (mousePos - targetPos).Magnitude < 20 then
+            mouse1click()
+            lastTrigger = tick()
         end
     end
 end)
 
--- UI Implementation
-local Window = Rayfield:CreateWindow({
-    Name = "Aimbot",
-    LoadingTitle = "Aimbot",
-    LoadingSubtitle = "Target selection and mouse assistance",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "DanFFA",
-        FileName = "Config"
-    }
+-- UI Construction
+
+local Window = Library:CreateWindow({
+    Title = "Aimbot",
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
 })
 
-local MainTab = Window:CreateTab("Aimbot", nil)
-local VisualsTab = Window:CreateTab("Visuals", nil)
-local SettingsTab = Window:CreateTab("Settings", nil)
-local ConfigTab = Window:CreateTab("Configs", nil)
+local Tabs = {
+    Aimbot = Window:AddTab("Aimbot"),
+    Silent = Window:AddTab("Silent"),
+    Triggerbot = Window:AddTab("Triggerbot"),
+    Visuals = Window:AddTab("Visuals"),
+    Settings = Window:AddTab("Settings"),
+    Configs = Window:AddTab("Configs")
+}
 
--- Main Tab
-MainTab:CreateToggle({
-    Name = "Enabled",
-    CurrentValue = false,
-    Flag = "AimEnabled",
-    Callback = function(Value) CheatSettings.AimEnabled = Value end,
-})
+-- Aimbot Tab
+local AimbotGroup = Tabs.Aimbot:AddLeftGroupbox("Target selection and mouse assistance")
 
-MainTab:CreateDropdown({
-    Name = "Aim Mode",
-    Options = {"Mouse", "Camera"},
-    CurrentOption = {"Mouse"},
-    Flag = "AimMode",
-    Callback = function(Option) CheatSettings.AimMode = Option[1] end,
-})
+AimbotGroup:AddToggle("AimEnabled", {Text = "Enabled", Default = false}):OnChanged(function(Value)
+    Settings.AimEnabled = Value
+end)
 
-MainTab:CreateDropdown({
-    Name = "Target Part",
-    Options = {"Head", "Torso", "HumanoidRootPart"},
-    CurrentOption = {"Head"},
-    Flag = "TargetPart",
-    Callback = function(Option) CheatSettings.TargetPart = Option[1] end,
-})
+AimbotGroup:AddDropdown("AimMode", {Values = {"Mouse", "Camera"}, Default = "Mouse", Text = "Aim Mode"}):OnChanged(function(Value)
+    Settings.AimMode = Value
+end)
 
-MainTab:CreateDropdown({
-    Name = "Air Target Part",
-    Options = {"Head", "Torso", "HumanoidRootPart"},
-    CurrentOption = {"Head"},
-    Flag = "AirTargetPart",
-    Callback = function(Option) CheatSettings.AirTargetPart = Option[1] end,
-})
+AimbotGroup:AddDropdown("TargetPart", {Values = {"Head", "Torso", "HumanoidRootPart"}, Default = "Head", Text = "Target Part"}):OnChanged(function(Value)
+    Settings.TargetPart = Value
+end)
 
-MainTab:CreateSlider({
-    Name = "Sensitivity",
-    Range = {0, 10},
-    Increment = 0.1,
-    Suffix = "x",
-    CurrentValue = 0.5,
-    Flag = "Sensitivity",
-    Callback = function(Value) CheatSettings.Sensitivity = Value end,
-})
+AimbotGroup:AddDropdown("AirTargetPart", {Values = {"Head", "Torso", "HumanoidRootPart"}, Default = "Head", Text = "Air Target Part"}):OnChanged(function(Value)
+    Settings.AirTargetPart = Value
+end)
 
-MainTab:CreateSlider({
-    Name = "Smoothing",
-    Range = {0, 1},
-    Increment = 0.01,
-    Suffix = "",
-    CurrentValue = 0.2,
-    Flag = "Smoothing",
-    Callback = function(Value) CheatSettings.Smoothing = Value end,
-})
+AimbotGroup:AddSlider("Sensitivity", {Text = "Sensitivity", Min = 0, Max = 5, Default = 1, Rounding = 2}):OnChanged(function(Value)
+    Settings.Sensitivity = Value
+end)
 
-MainTab:CreateSlider({
-    Name = "Prediction",
-    Range = {0, 1},
-    Increment = 0.01,
-    Suffix = "",
-    CurrentValue = 0.1,
-    Flag = "Prediction",
-    Callback = function(Value) CheatSettings.Prediction = Value end,
-})
+AimbotGroup:AddSlider("Smoothing", {Text = "Smoothing", Min = 0, Max = 1, Default = 0.2, Rounding = 2}):OnChanged(function(Value)
+    Settings.Smoothing = Value
+end)
 
-MainTab:CreateToggle({
-    Name = "Sticky Target",
-    CurrentValue = false,
-    Flag = "StickyTarget",
-    Callback = function(Value) CheatSettings.StickyTarget = Value end,
-})
+AimbotGroup:AddSlider("Prediction", {Text = "Prediction", Min = 0, Max = 1, Default = 0.1, Rounding = 2}):OnChanged(function(Value)
+    Settings.Prediction = Value
+end)
 
-MainTab:CreateToggle({
-    Name = "Disable On Kill",
-    CurrentValue = false,
-    Flag = "DisableOnKill",
-    Callback = function(Value) CheatSettings.DisableOnKill = Value end,
-})
+AimbotGroup:AddToggle("StickyTarget", {Text = "Sticky Target", Default = false}):OnChanged(function(Value)
+    Settings.StickyTarget = Value
+end)
 
--- Silent Aim Tab
-local SilentTab = Window:CreateTab("Silent", nil)
-SilentTab:CreateToggle({
-    Name = "Enabled",
-    CurrentValue = false,
-    Flag = "SilentEnabled",
-    Callback = function(Value) CheatSettings.SilentEnabled = Value end,
-})
+AimbotGroup:AddToggle("DisableOnKill", {Text = "Disable On Kill", Default = false}):OnChanged(function(Value)
+    Settings.DisableOnKill = Value
+end)
+
+-- Silent Tab
+local SilentGroup = Tabs.Silent:AddLeftGroupbox("Silent Aim")
+
+SilentGroup:AddToggle("SilentEnabled", {Text = "Enabled", Default = false}):OnChanged(function(Value)
+    Settings.SilentEnabled = Value
+end)
 
 -- Triggerbot Tab
-local TriggerTab = Window:CreateTab("Triggerbot", nil)
-TriggerTab:CreateToggle({
-    Name = "Enabled",
-    CurrentValue = false,
-    Flag = "TriggerbotEnabled",
-    Callback = function(Value) CheatSettings.TriggerbotEnabled = Value end,
-})
+local TriggerGroup = Tabs.Triggerbot:AddLeftGroupbox("Triggerbot")
+
+TriggerGroup:AddToggle("TriggerbotEnabled", {Text = "Enabled", Default = false}):OnChanged(function(Value)
+    Settings.TriggerbotEnabled = Value
+end)
+
+TriggerGroup:AddSlider("TriggerbotDelay", {Text = "Delay", Min = 0, Max = 0.5, Default = 0.05, Rounding = 2, Suffix = "s"}):OnChanged(function(Value)
+    Settings.TriggerbotDelay = Value
+end)
+
+-- Visuals Tab
+local VisualsGroup = Tabs.Visuals:AddLeftGroupbox("ESP")
+
+VisualsGroup:AddToggle("VisualsEnabled", {Text = "Enabled", Default = false}):OnChanged(function(Value)
+    Settings.VisualsEnabled = Value
+end)
+
+-- Handle kill event for DisableOnKill
+LocalPlayer.CharacterAdded:Connect(function(char)
+    char:WaitForChild("Humanoid").Died:Connect(function()
+        if Settings.DisableOnKill then
+            Settings.AimEnabled = false
+            Settings.SilentEnabled = false
+            Settings.TriggerbotEnabled = false
+            Toggles.AimEnabled:SetValue(false)
+            Toggles.SilentEnabled:SetValue(false)
+            Toggles.TriggerbotEnabled:SetValue(false)
+        end
+    end)
+end)
+
+-- Configs
+Tabs.Configs:AddLeftGroupbox("Config"):AddButton("Save", function()
+    SaveManager:Save("DanFFA_Config")
+end)
+
+Tabs.Configs:AddLeftGroupbox("Config"):AddButton("Load", function()
+    SaveManager:Load("DanFFA_Config")
+end)
